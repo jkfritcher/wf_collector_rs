@@ -3,13 +3,13 @@ stations.
 
 After collecting messages from the channels, the best options are pushed to a
 series of MQTT topics for consumption by other systems. Depending on the
-connected state of the WebSocket channel, some messages will come from there,
-and others will come from the UDPmessages.
+connected state of the WebSocket channel, some messages will come from the WS
+channel, and others will come from the UDP messages.
 
 WS vs UDP
 
 The primary split is based around the observations and lightning events. If
-the WS channels if connected, evt_strike and obs_* received via UDP will be
+the WS channel is connected, evt_strike and obs_* received via UDP will be
 ignored, and instead we will wait for those events to be echo'ed back to us
 via the WS channel.
 
@@ -27,7 +27,7 @@ to the UDP data and pass it on, as-is.
 Build Instructions
 
 Requirements:
-* Rust v1.47 or higher
+* Rust v1.56 or higher
 
 Building is simple, once rust is installed, run the following command
 

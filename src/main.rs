@@ -26,6 +26,8 @@ use mqtt::mqtt_publisher;
 use udp::udp_collector;
 use websocket::websocket_collector;
 
+//mod foo;
+
 fn print_usage_and_exit(program: &str, opts: Options) -> ! {
     let brief = format!("Usage: {} [options] <config file name>", program);
     print!("{}", opts.usage(&brief));
@@ -89,25 +91,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut ignored_msg_types: Vec<String> = Vec::new();
 
     // Collect args for MQTT
-    let mqtt_args = MqttArgs {
-        hostname: config.mqtt_hostname,
-        port: config.mqtt_port,
-        username: config.mqtt_username,
-        password: config.mqtt_password,
-        client_id: config.mqtt_client_id,
-        topic_base: config.mqtt_topic_base,
-    };
+    let mqtt_args = MqttArgs::new(config.clone());
 
     let auth_method = if config.token.is_some() {
         WFAuthMethod::AUTHTOKEN(config.token.unwrap())
     } else {
         WFAuthMethod::APIKEY(config.api_key.unwrap())
     };
-    let ws_args = WsArgs {
-        auth_method,
-        station_id: Some(config.station_id),
-        device_ids: None,
-    };
+
+    let ws_args = WsArgs::new(auth_method, Some(config.station_id), None);
 
     let mqtt_topic_base = mqtt_args.topic_base.clone();
 
@@ -118,13 +110,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let (publisher_tx, publisher_rx) = mpsc::unbounded_channel::<(String, String)>();
 
     // Spawn tasks for the collectors / consumer
-    let udp_task = tokio::spawn(udp_collector(collector_tx.clone(), config.senders));
+    let udp_task = tokio::spawn(udp_collector(collector_tx.clone(), "0.0.0.0:50222", config.senders));
     let ws_task = tokio::spawn(websocket_collector(collector_tx, ws_args));
     let msg_consumer_task = tokio::spawn(message_consumer(consumer_rx, publisher_tx, ignored_msg_types, mqtt_topic_base));
     let mqtt_publisher_task = tokio::spawn(mqtt_publisher(publisher_rx, mqtt_args));
 
     // Wait for spawned tasks to complete, which should not occur, so effectively hang the task.
-    join!(udp_task, ws_task, msg_consumer_task, mqtt_publisher_task);
+    let _ = join!(udp_task, ws_task, msg_consumer_task, mqtt_publisher_task);
+    //let _ = join!(udp_task, ws_task, msg_consumer_task);
+    //let _ = join!(udp_task, msg_consumer_task, mqtt_publisher_task);
 
     Ok(())
 }

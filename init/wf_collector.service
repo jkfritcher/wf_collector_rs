@@ -1,7 +1,7 @@
 [Unit]
 Description=WeatherFlow UDP/WS data collector
-Requires=network.target mosquitto.service
-After=network.target mosquitto.service
+Requires=network-online.target network.target docker.mosquitto.service
+After=network-online.target network.target docker.mosquitto.service
 StartLimitIntervalSec=0
 
 [Service]

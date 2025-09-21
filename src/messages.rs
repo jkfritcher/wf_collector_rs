@@ -1,7 +1,7 @@
 // Copyright (c) 2020, Jason Fritcher <jkf@wolfnet.org>
 // All rights reserved.
 
-use std::{str, sync::atomic::Ordering};
+use std::str;
 
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -11,7 +11,7 @@ use log::{trace, debug, info, warn, error};
 
 use crate::common::{WFMessage, WFSource};
 use crate::mqtt::{mqtt_publish_message, mqtt_publish_raw_message};
-use crate::websocket::get_ws_connected;
+use crate::websocket::is_ws_connected;
 
 fn get_hub_sn_from_msg(msg_obj: &serde_json::Value) -> Option<&str> {
     let msg_map = msg_obj.as_object()?;
@@ -28,9 +28,6 @@ pub async fn message_consumer(
     ignored_msg_types: Vec<String>,
     mqtt_topic_base: String,
 ) {
-    // Get WS connected reference
-    let ws_connected = get_ws_connected();
-
     // Wait for messages from the consumers to process
     while let Some(msg) = collector_rx.recv().await {
         let msg_str = match str::from_utf8(&msg.message) {
@@ -84,21 +81,33 @@ pub async fn message_consumer(
         }
 
         // Ignore cached WS summary messages
-        if msg.source == WFSource::WS {
-            if let Some(msg_source) = msg_obj.get("source") {
-                if msg_source.as_str().unwrap_or("") == "cache" {
-                    debug!("Ignoring WS cached summary message");
-                    continue;
-                }
-            };
-        }
+        // if msg.source == WFSource::WS {
+        //     if let Some(msg_source) = msg_obj.get("source") {
+        //         if msg_source.as_str().unwrap_or("") == "cache" {
+        //             debug!("Ignoring WS cached summary message");
+        //             continue;
+        //         }
+        //     };
+        // }
 
         // Get the Hub serial number and make topic base
-        let hub_sn = get_hub_sn_from_msg(&msg_json).unwrap();
+        let hub_sn = match get_hub_sn_from_msg(&msg_json) {
+            Some(sn) => {
+                sn
+            },
+            None => {
+                warn!("Received message with no serial numbers, ignoring.");
+                debug!("Packet contents: {}", &msg_json);
+                continue;
+            }
+        };
         let topic_base = format!("{0}/{1}", mqtt_topic_base, hub_sn);
 
         // Publish raw message to mqtt
         mqtt_publish_raw_message(&publisher_tx, &topic_base, &msg.source, msg_str);
+
+        // Get WS connected state
+        let ws_connected = is_ws_connected();
 
         // Handle specific message types
         match msg_type {
@@ -111,7 +120,7 @@ pub async fn message_consumer(
                 mqtt_publish_message(&publisher_tx, &topic, msg_str);
             }
             mt if mt.starts_with("obs_") => {
-                if ws_connected.load(Ordering::SeqCst) && msg.source == WFSource::UDP {
+                if ws_connected && msg.source == WFSource::UDP {
                     // Ignore the UDP events if we're connected via WS
                     continue;
                 }
@@ -121,7 +130,7 @@ pub async fn message_consumer(
             mt if mt.starts_with("evt_") => {
                 match mt {
                     "evt_strike" => {
-                        if ws_connected.load(Ordering::SeqCst) && msg.source == WFSource::UDP {
+                        if ws_connected && msg.source == WFSource::UDP {
                             // Ignore the UDP events if we're connected via WS
                             continue;
                         }

@@ -5,7 +5,7 @@ use std::{fs::File, io::BufReader, net::IpAddr};
 
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Config {
     pub station_id: u32,
     pub token: Option<String>,
