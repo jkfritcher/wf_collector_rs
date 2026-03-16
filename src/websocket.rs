@@ -28,7 +28,7 @@ use log::{trace, debug, info, warn, error};
 const WF_REST_BASE_URL: &str = "https://swd.weatherflow.com/swd/rest";
 const WF_WS_URL: &str = "wss://ws.weatherflow.com/swd/data";
 
-const WF_WS_RECV_TIMEOUT: u64 = 10;
+const WF_WS_RECV_TIMEOUT: Duration = Duration::from_secs(180);
 
 static WS_CONNECTED: AtomicBool = AtomicBool::new(false);
 
@@ -247,7 +247,7 @@ pub async fn websocket_collector(collector_tx: mpsc::UnboundedSender<WFMessage>,
         info!("WS finished sending listen_start(s).");
 
         loop {
-            let msg = match timeout(Duration::from_secs(WF_WS_RECV_TIMEOUT), ws_stream.next()).await {
+            let msg = match timeout(WF_WS_RECV_TIMEOUT, ws_stream.next()).await {
                 Err(_err) => {
                     error!("Timeout waiting for next websocket message");
                     break;
