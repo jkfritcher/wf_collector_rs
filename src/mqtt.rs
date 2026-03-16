@@ -1,20 +1,20 @@
-// Copyright (c) 2020, Jason Fritcher <jkf@wolfnet.org>
+// Copyright (c) 2020, 2026, Jason Fritcher <jkf@wolfnet.org>
 // All rights reserved.
 
 use std::process;
 
 use tokio::sync::mpsc;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 use url::Url;
 
 use mqtt_async_client::{
-    client::{Client, KeepAlive, Publish as PublishOpts, QoS},
     Result,
+    client::{Client, KeepAlive, Publish as PublishOpts, QoS},
 };
 
 #[allow(unused_imports)]
-use log::{trace, debug, info, warn, error};
+use log::{debug, error, info, trace, warn};
 
 use crate::common::{MqttArgs, WFSource};
 
@@ -23,7 +23,7 @@ fn client_from_args(args: MqttArgs) -> Result<Client> {
     b.set_url(
         format!("mqtt://{0}:{1}", &args.hostname, args.port)
             .parse::<Url>()
-            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?,
     )?
     .set_client_id(args.client_id)
     .set_keep_alive(KeepAlive::from_secs(30))
@@ -71,7 +71,10 @@ pub async fn mqtt_publisher(
 ) {
     let mut client = match client_from_args(args) {
         Ok(client) => client,
-        Err(err) => { error!("Failed to build mqtt client: {}", err); process::abort(); }
+        Err(err) => {
+            error!("Failed to build mqtt client: {}", err);
+            process::abort();
+        }
     };
 
     while let Err(err) = client.connect().await {

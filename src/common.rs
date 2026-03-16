@@ -1,4 +1,4 @@
-// Copyright (c) 2020, Jason Fritcher <jkf@wolfnet.org>
+// Copyright (c) 2020, 2026, Jason Fritcher <jkf@wolfnet.org>
 // All rights reserved.
 
 use bytes::Bytes;
@@ -39,7 +39,7 @@ impl WsArgs {
     pub fn new(
         auth_method: WFAuthMethod,
         station_id: Option<u32>,
-        device_ids: Option<Vec<u32>>
+        device_ids: Option<Vec<u32>>,
     ) -> Self {
         Self {
             auth_method,
@@ -49,6 +49,7 @@ impl WsArgs {
     }
 }
 
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, PartialEq)]
 pub enum WFSource {
     UDP,
@@ -63,6 +64,6 @@ pub struct WFMessage {
 
 #[derive(Debug)]
 pub enum WFAuthMethod {
-    APIKEY(String),
-    AUTHTOKEN(String),
+    ApiKey(String),
+    AuthToken(String),
 }

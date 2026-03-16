@@ -1,4 +1,4 @@
-// Copyright (c) 2020, Jason Fritcher <jkf@wolfnet.org>
+// Copyright (c) 2020, 2026, Jason Fritcher <jkf@wolfnet.org>
 // All rights reserved.
 
 use std::{
@@ -12,18 +12,18 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, sleep, timeout};
 use tokio_tungstenite::{
-    connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
+    MaybeTlsStream, WebSocketStream, connect_async, tungstenite::protocol::Message,
 };
 
 use futures_util::{SinkExt, StreamExt};
 
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 
-use crate::common::{WFMessage, WFSource, WFAuthMethod, WsArgs};
-use WFAuthMethod::{APIKEY, AUTHTOKEN};
+use crate::common::{WFAuthMethod, WFMessage, WFSource, WsArgs};
+use WFAuthMethod::{ApiKey, AuthToken};
 
 #[allow(unused_imports)]
-use log::{trace, debug, info, warn, error};
+use log::{debug, error, info, trace, warn};
 
 const WF_REST_BASE_URL: &str = "https://swd.weatherflow.com/swd/rest";
 const WF_WS_URL: &str = "wss://ws.weatherflow.com/swd/data";
@@ -96,9 +96,8 @@ async fn get_device_ids_with_station_id(url_str: &str, station_id: u32) -> Optio
 }
 
 async fn websocket_connect(
-    url_str: &str
-) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, String>
-{
+    url_str: &str,
+) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, String> {
     // Connect to WS endpoint
     let mut ws_stream = match connect_async(url_str).await {
         Ok((ws_stream, ws_response)) => {
@@ -158,20 +157,21 @@ async fn websocket_send_listen_start<S>(
     device_ids: &[u32],
 ) -> Result<(), String>
 where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     for device_id in device_ids {
         // Use current epoch time as request id
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("Failed to get current epoch time")
-            .as_millis() as u64;  // The cast won't overflow for millions of years
+            .as_millis() as u64; // The cast won't overflow for millions of years
 
         // json to send as request
         let request_id = now.to_string();
         let ws_request = json!(
             {"type":"listen_start","device_id":device_id,"id":request_id}
-        ).to_string();
+        )
+        .to_string();
 
         // Connection opened, request station observations
         if let Err(err) = ws_stream.send(Message::text(ws_request)).await {
@@ -189,18 +189,27 @@ where
 
 pub async fn websocket_collector(collector_tx: mpsc::UnboundedSender<WFMessage>, ws_args: WsArgs) {
     let auth_uri_str = match ws_args.auth_method {
-        APIKEY(key) => format!("api_key={}", key),
-        AUTHTOKEN(token) => format!("token={}", token),
+        ApiKey(key) => format!("api_key={}", key),
+        AuthToken(token) => format!("token={}", token),
     };
 
     let device_ids;
     if let Some(station_id) = ws_args.station_id {
-        let rest_url_str = format!("{}/stations/{}?{}", WF_REST_BASE_URL, station_id, auth_uri_str);
+        let rest_url_str = format!(
+            "{}/stations/{}?{}",
+            WF_REST_BASE_URL, station_id, auth_uri_str
+        );
         device_ids = match get_device_ids_with_station_id(&rest_url_str, station_id).await {
             Some(device_ids) => device_ids,
-            None => { error!("Failed to get device_ids from station_id."); return; }
+            None => {
+                error!("Failed to get device_ids from station_id.");
+                return;
+            }
         };
-        info!("Received device_ids {:?} for station_id {}", device_ids, station_id);
+        info!(
+            "Received device_ids {:?} for station_id {}",
+            device_ids, station_id
+        );
     } else {
         device_ids = ws_args.device_ids.unwrap();
         info!("Using device_ids {:?}", device_ids);
@@ -255,14 +264,12 @@ pub async fn websocket_collector(collector_tx: mpsc::UnboundedSender<WFMessage>,
                 Ok(None) => {
                     warn!("Websocket connection closed");
                     break;
-                },
+                }
                 Ok(Some(Err(err))) => {
                     error!("WebSocket receive error: {:?}", err);
                     continue;
-                },
-                Ok(Some(Ok(msg))) => {
-                    msg
-                },
+                }
+                Ok(Some(Ok(msg))) => msg,
             };
 
             trace!("WS Message received: {}", msg);

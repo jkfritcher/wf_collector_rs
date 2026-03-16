@@ -1,4 +1,4 @@
-// Copyright (c) 2020, Jason Fritcher <jkf@wolfnet.org>
+// Copyright (c) 2020, 2026, Jason Fritcher <jkf@wolfnet.org>
 // All rights reserved.
 
 use std::net::IpAddr;
@@ -7,7 +7,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
 #[allow(unused_imports)]
-use log::{trace, debug, info, warn, error};
+use log::{debug, error, info, trace, warn};
 
 use crate::common::{WFMessage, WFSource};
 
@@ -16,7 +16,8 @@ pub async fn udp_collector(
     listen_addr: &str,
     sources: Vec<IpAddr>,
 ) -> ! {
-    let socket = UdpSocket::bind(&listen_addr).await
+    let socket = UdpSocket::bind(&listen_addr)
+        .await
         .expect("Failed to create UDP listener socket!");
 
     info!("UDP listener successfully opened.");
@@ -25,13 +26,17 @@ pub async fn udp_collector(
     let mut buf = vec![0u8; 1024];
     loop {
         let (size, from) = socket
-            .recv_from(&mut buf).await
+            .recv_from(&mut buf)
+            .await
             .expect("Error from recv_from.");
         trace!("Received packet from {}", from);
 
         // Check recevied packet against approved sources
         if !sources.is_empty() && !sources.iter().any(|&source| source == from.ip()) {
-            warn!("Ignoring packet from {}, sender is not approved!", from.ip());
+            warn!(
+                "Ignoring packet from {}, sender is not approved!",
+                from.ip()
+            );
             continue;
         }
 
