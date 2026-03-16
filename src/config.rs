@@ -1,10 +1,11 @@
-// Copyright (c) 2020, Jason Fritcher <jkf@wolfnet.org>
+// Copyright (c) 2020, 2026, Jason Fritcher <jkf@wolfnet.org>
 // All rights reserved.
 
 use std::{fs::File, io::BufReader, net::IpAddr};
 
 use serde::Deserialize;
 
+#[allow(unused)]
 #[derive(Clone, Debug, Deserialize)]
 pub struct Config {
     pub station_id: Option<u32>,

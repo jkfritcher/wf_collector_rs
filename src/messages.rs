@@ -1,4 +1,4 @@
-// Copyright (c) 2020, Jason Fritcher <jkf@wolfnet.org>
+// Copyright (c) 2020, 2026, Jason Fritcher <jkf@wolfnet.org>
 // All rights reserved.
 
 use std::str;
@@ -7,7 +7,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 #[allow(unused_imports)]
-use log::{trace, debug, info, warn, error};
+use log::{debug, error, info, trace, warn};
 
 use crate::common::{WFMessage, WFSource};
 use crate::mqtt::{mqtt_publish_message, mqtt_publish_raw_message};
@@ -45,7 +45,10 @@ pub async fn message_consumer(
             Ok(msg) => msg,
         };
         if !msg_json.is_object() {
-            warn!("{:?} message is not an expected json object, skipping", msg.source);
+            warn!(
+                "{:?} message is not an expected json object, skipping",
+                msg.source
+            );
             continue;
         }
         let msg_obj = match msg_json.as_object() {
@@ -92,9 +95,7 @@ pub async fn message_consumer(
 
         // Get the Hub serial number and make topic base
         let hub_sn = match get_hub_sn_from_msg(&msg_json) {
-            Some(sn) => {
-                sn
-            },
+            Some(sn) => sn,
             None => {
                 warn!("Received message with no serial numbers, ignoring.");
                 debug!("Packet contents: {}", &msg_json);
@@ -141,7 +142,10 @@ pub async fn message_consumer(
                             continue;
                         }
                     }
-                    _ => { warn!("Unknown evt message type, ignoring. ({})", mt); continue; }
+                    _ => {
+                        warn!("Unknown evt message type, ignoring. ({})", mt);
+                        continue;
+                    }
                 }
                 let topic = format!("{}/evt", &topic_base);
                 mqtt_publish_message(&publisher_tx, &topic, msg_str);
