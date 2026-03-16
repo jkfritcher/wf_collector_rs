@@ -86,10 +86,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Load config file
     let config = new_config_from_yaml_file(&config_name);
 
-    // Message types to ignore
-    #[allow(unused_mut)]
-    let mut ignored_msg_types: Vec<String> = Vec::new();
-
     // Collect args for MQTT
     let mqtt_args = MqttArgs::new(config.clone());
 
@@ -99,7 +95,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         WFAuthMethod::APIKEY(config.api_key.unwrap())
     };
 
-    let ws_args = WsArgs::new(auth_method, Some(config.station_id), None);
+    let ws_args = WsArgs::new(auth_method, config.station_id, None);
 
     let mqtt_topic_base = mqtt_args.topic_base.clone();
 
@@ -112,13 +108,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Spawn tasks for the collectors / consumer
     let udp_task = tokio::spawn(udp_collector(collector_tx.clone(), "0.0.0.0:50222", config.senders));
     let ws_task = tokio::spawn(websocket_collector(collector_tx, ws_args));
-    let msg_consumer_task = tokio::spawn(message_consumer(consumer_rx, publisher_tx, ignored_msg_types, mqtt_topic_base));
+    let msg_consumer_task = tokio::spawn(message_consumer(consumer_rx, publisher_tx, config.ignored_msg_types, mqtt_topic_base));
     let mqtt_publisher_task = tokio::spawn(mqtt_publisher(publisher_rx, mqtt_args));
 
     // Wait for spawned tasks to complete, which should not occur, so effectively hang the task.
     let _ = join!(udp_task, ws_task, msg_consumer_task, mqtt_publisher_task);
-    //let _ = join!(udp_task, ws_task, msg_consumer_task);
-    //let _ = join!(udp_task, msg_consumer_task, mqtt_publisher_task);
 
     Ok(())
 }

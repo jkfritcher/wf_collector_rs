@@ -7,11 +7,15 @@ use serde::Deserialize;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Config {
-    pub station_id: u32,
+    pub station_id: Option<u32>,
+    #[serde(default)]
+    pub device_ids: Vec<u32>,
     pub token: Option<String>,
     pub api_key: Option<String>,
 
-    #[serde(default = "Config::default_senders")]
+    #[serde(default)]
+    pub ignored_msg_types: Vec<String>,
+    #[serde(default)]
     pub senders: Vec<IpAddr>,
 
     #[serde(default = "Config::default_mqtt_hostname")]
@@ -52,9 +56,5 @@ impl Config {
 
     fn default_mqtt_topic_base() -> String {
         String::from("weatherflow")
-    }
-
-    fn default_senders() -> Vec<IpAddr> {
-        Vec::new()
     }
 }

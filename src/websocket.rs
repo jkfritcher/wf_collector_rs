@@ -98,7 +98,6 @@ async fn get_device_ids_with_station_id(url_str: &str, station_id: u32) -> Optio
 async fn websocket_connect(
     url_str: &str
 ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, String>
-
 {
     // Connect to WS endpoint
     let mut ws_stream = match connect_async(url_str).await {
@@ -224,7 +223,8 @@ pub async fn websocket_collector(collector_tx: mpsc::UnboundedSender<WFMessage>,
         info!("Connecting to WebSocket server");
         debug!("Connection URL: {}", ws_url_str);
         let mut ws_stream = match websocket_connect(&ws_url_str).await {
-            Err(_) => {
+            Err(err) => {
+                error!("Error received from websocket_connect(): {}", err);
                 if reconnect_delay == 0 {
                     reconnect_delay = 1;
                 }
@@ -237,10 +237,8 @@ pub async fn websocket_collector(collector_tx: mpsc::UnboundedSender<WFMessage>,
 
         info!("WebSocket connected successfully.");
 
-        if websocket_send_listen_start(&mut ws_stream, &device_ids)
-            .await
-            .is_err()
-        {
+        if let Err(err) = websocket_send_listen_start(&mut ws_stream, &device_ids).await {
+            error!("Error received from websocket_send_listen_start: {}", err);
             reconnect_delay = 1;
             continue;
         }

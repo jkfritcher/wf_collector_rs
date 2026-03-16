@@ -2,9 +2,9 @@
 name = "wf_collector_rs"
 description = "UDP and WebSocket data collector for WeatherFlow Smart Weather stations."
 license = "BSD-3-Clause"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Jason Fritcher <jkf@wolfnet.org>"]
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 log = "0.4"
@@ -20,9 +20,9 @@ serde_derive = "1.0"
 serde_json = "1.0"
 serde_yaml = "0.9"
 
-reqwest = { version = "0.12", default_features = false, features = ["rustls-tls-native-roots"] }
-tungstenite = { version = "0.27.0", features = ["rustls-tls-native-roots"] }
-tokio-tungstenite = { version = "0.27.0", features = ["connect","rustls-tls-native-roots"] }
+reqwest = "0.13"
+tungstenite = { version = "0.28.0", features = ["rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.28.0", features = ["connect","rustls-tls-native-roots"] }
 
 bytes = "1"
 chrono = { version = "0.4.23", default-features = false, features = ["clock"] }
