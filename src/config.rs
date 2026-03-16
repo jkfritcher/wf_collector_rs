@@ -1,17 +1,22 @@
-// Copyright (c) 2020, Jason Fritcher <jkf@wolfnet.org>
+// Copyright (c) 2020, 2026, Jason Fritcher <jkf@wolfnet.org>
 // All rights reserved.
 
 use std::{fs::File, io::BufReader, net::IpAddr};
 
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[allow(unused)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Config {
-    pub station_id: u32,
+    pub station_id: Option<u32>,
+    #[serde(default)]
+    pub device_ids: Vec<u32>,
     pub token: Option<String>,
     pub api_key: Option<String>,
 
-    #[serde(default = "Config::default_senders")]
+    #[serde(default)]
+    pub ignored_msg_types: Vec<String>,
+    #[serde(default)]
     pub senders: Vec<IpAddr>,
 
     #[serde(default = "Config::default_mqtt_hostname")]
@@ -21,6 +26,8 @@ pub struct Config {
     pub mqtt_username: Option<String>,
     pub mqtt_password: Option<String>,
     pub mqtt_client_id: Option<String>,
+    #[serde(default = "Config::default_mqtt_topic_base")]
+    pub mqtt_topic_base: String,
 }
 
 pub fn new_config_from_yaml_file(config_file: &str) -> Config {
@@ -48,7 +55,7 @@ impl Config {
         1883
     }
 
-    fn default_senders() -> Vec<IpAddr> {
-        Vec::new()
+    fn default_mqtt_topic_base() -> String {
+        String::from("weatherflow")
     }
 }

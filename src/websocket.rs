@@ -1,76 +1,78 @@
-// Copyright (c) 2020, Jason Fritcher <jkf@wolfnet.org>
+// Copyright (c) 2020, 2026, Jason Fritcher <jkf@wolfnet.org>
 // All rights reserved.
 
 use std::{
     str,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicBool, Ordering},
     time::SystemTime,
 };
 
+use futures::stream::FusedStream;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tokio::time::{delay_for, Duration};
+use tokio::time::{Duration, sleep, timeout};
 use tokio_tungstenite::{
-    connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
+    MaybeTlsStream, WebSocketStream, connect_async, tungstenite::protocol::Message,
 };
 
 use futures_util::{SinkExt, StreamExt};
 
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 
-use lazy_static::lazy_static;
-
-use crate::common::{WFMessage, WFSource, WFAuthMethod, WsArgs};
-use WFAuthMethod::{APIKEY, AUTHTOKEN};
+use crate::common::{WFAuthMethod, WFMessage, WFSource, WsArgs};
+use WFAuthMethod::{ApiKey, AuthToken};
 
 #[allow(unused_imports)]
-use log::{trace, debug, info, warn, error};
+use log::{debug, error, info, trace, warn};
 
 const WF_REST_BASE_URL: &str = "https://swd.weatherflow.com/swd/rest";
 const WF_WS_URL: &str = "wss://ws.weatherflow.com/swd/data";
 
-lazy_static! {
-    static ref WS_CONNECTED: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+const WF_WS_RECV_TIMEOUT: Duration = Duration::from_secs(180);
+
+static WS_CONNECTED: AtomicBool = AtomicBool::new(false);
+
+pub fn is_ws_connected() -> bool {
+    WS_CONNECTED.load(Ordering::SeqCst)
 }
 
-pub fn get_ws_connected() -> Arc<AtomicBool> {
-    WS_CONNECTED.clone()
+fn set_ws_connected(connected: bool) {
+    WS_CONNECTED.store(connected, Ordering::SeqCst);
 }
 
 async fn get_device_ids_with_station_id(url_str: &str, station_id: u32) -> Option<Vec<u32>> {
     debug!("REST URL: {}", url_str);
     info!("Requesting Device IDs for Station ID {}", station_id);
-    let mut device_ids: Vec<u32> = Vec::new();
     let resp = match reqwest::get(url_str).await {
+        Ok(resp) => resp,
         Err(err) => {
             error!("Received error requesting device_ids: {}", err);
             return None;
         }
-        Ok(resp) => resp,
     };
     let resp_bytes = match resp.bytes().await {
+        Ok(resp_bytes) => resp_bytes,
         Err(err) => {
             error!("Error receiving response text: {}", err);
             return None;
         }
-        Ok(resp_bytes) => resp_bytes,
     };
     let resp_obj: JsonValue = match serde_json::from_slice(resp_bytes.as_ref()) {
+        Ok(resp_obj) => resp_obj,
         Err(err) => {
             error!("Error json decoding response: {}", err);
             return None;
         }
-        Ok(resp_obj) => resp_obj,
     };
     if resp_obj["status"]["status_code"] != 0 {
-        error!("Received error status: {} - {}", resp_obj["status"]["status_code"],
-                                                 resp_obj["status"]["status_message"]);
+        error!(
+            "Received error status: {} - {}",
+            resp_obj["status"]["status_code"], resp_obj["status"]["status_message"]
+        );
         return None;
     }
 
+    let mut device_ids: Vec<u32> = Vec::new();
     if let Some(devices) = resp_obj["stations"][0]["devices"].as_array() {
         for device in devices {
             debug!("device: {}", device);
@@ -93,7 +95,9 @@ async fn get_device_ids_with_station_id(url_str: &str, station_id: u32) -> Optio
     Some(device_ids)
 }
 
-async fn websocket_connect(url_str: &str) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, String> {
+async fn websocket_connect(
+    url_str: &str,
+) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, String> {
     // Connect to WS endpoint
     let mut ws_stream = match connect_async(url_str).await {
         Ok((ws_stream, ws_response)) => {
@@ -148,20 +152,26 @@ async fn websocket_connect(url_str: &str) -> Result<WebSocketStream<MaybeTlsStre
     Ok(ws_stream)
 }
 
-async fn websocket_send_listen_start(ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>, device_ids: &[u32]) -> Result<(), String> {
-    // Use current epoch time as request id
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .expect("Failed to get current epoch time")
-        .as_secs();
-    let now_str = now.to_string();
-    let mut req_ctr: u32 = 1;
-
+async fn websocket_send_listen_start<S>(
+    ws_stream: &mut WebSocketStream<S>,
+    device_ids: &[u32],
+) -> Result<(), String>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     for device_id in device_ids {
+        // Use current epoch time as request id
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("Failed to get current epoch time")
+            .as_millis() as u64; // The cast won't overflow for millions of years
+
         // json to send as request
-        let request_id = format!("{}_{}", now_str, req_ctr);
-        req_ctr += 1;
-        let ws_request = json!({"type":"listen_start","device_id":device_id,"id":request_id}).to_string();
+        let request_id = now.to_string();
+        let ws_request = json!(
+            {"type":"listen_start","device_id":device_id,"id":request_id}
+        )
+        .to_string();
 
         // Connection opened, request station observations
         if let Err(err) = ws_stream.send(Message::text(ws_request)).await {
@@ -179,41 +189,56 @@ async fn websocket_send_listen_start(ws_stream: &mut WebSocketStream<MaybeTlsStr
 
 pub async fn websocket_collector(collector_tx: mpsc::UnboundedSender<WFMessage>, ws_args: WsArgs) {
     let auth_uri_str = match ws_args.auth_method {
-        APIKEY(key) => format!("api_key={}", key),
-        AUTHTOKEN(token) => format!("token={}", token),
+        ApiKey(key) => format!("api_key={}", key),
+        AuthToken(token) => format!("token={}", token),
     };
 
     let device_ids;
     if let Some(station_id) = ws_args.station_id {
-        let rest_url_str = format!("{}/stations/{}?{}", WF_REST_BASE_URL, station_id, auth_uri_str);
+        let rest_url_str = format!(
+            "{}/stations/{}?{}",
+            WF_REST_BASE_URL, station_id, auth_uri_str
+        );
         device_ids = match get_device_ids_with_station_id(&rest_url_str, station_id).await {
             Some(device_ids) => device_ids,
-            None => { error!("Failed to get device_ids from station_id."); return; }
+            None => {
+                error!("Failed to get device_ids from station_id.");
+                return;
+            }
         };
-        info!("Received device_ids {:?} for station_id {}", device_ids, station_id);
+        info!(
+            "Received device_ids {:?} for station_id {}",
+            device_ids, station_id
+        );
     } else {
         device_ids = ws_args.device_ids.unwrap();
         info!("Using device_ids {:?}", device_ids);
     }
 
-    let ws_connected = WS_CONNECTED.clone();
     let mut reconnect_delay: u32 = 0;
     loop {
         // Delay before reconnecting if there were previous errors
-        ws_connected.store(false, Ordering::SeqCst);
+        set_ws_connected(false);
         if reconnect_delay > 0 {
-            delay_for(Duration::from_secs(reconnect_delay.into())).await;
-            reconnect_delay = if reconnect_delay < 32 { reconnect_delay * 2 } else { 32 };
+            sleep(Duration::from_secs(reconnect_delay.into())).await;
+            reconnect_delay = if reconnect_delay < 32 {
+                reconnect_delay * 2
+            } else {
+                32
+            };
         }
 
         let ws_url_str = format!("{}?{}", WF_WS_URL, auth_uri_str);
         info!("Connecting to WebSocket server");
         debug!("Connection URL: {}", ws_url_str);
         let mut ws_stream = match websocket_connect(&ws_url_str).await {
-            Err(_) => {
-                reconnect_delay = if reconnect_delay == 0 { 1 } else { reconnect_delay };
+            Err(err) => {
+                error!("Error received from websocket_connect(): {}", err);
+                if reconnect_delay == 0 {
+                    reconnect_delay = 1;
+                }
                 continue;
-            },
+            }
             Ok(ws_stream) => ws_stream,
         };
         // Reset reconnect delay
@@ -221,39 +246,55 @@ pub async fn websocket_collector(collector_tx: mpsc::UnboundedSender<WFMessage>,
 
         info!("WebSocket connected successfully.");
 
-        if websocket_send_listen_start(&mut ws_stream, &device_ids).await.is_err() {
+        if let Err(err) = websocket_send_listen_start(&mut ws_stream, &device_ids).await {
+            error!("Error received from websocket_send_listen_start: {}", err);
             reconnect_delay = 1;
             continue;
         }
 
-        ws_connected.store(true, Ordering::SeqCst);
+        set_ws_connected(true);
         info!("WS finished sending listen_start(s).");
 
-        while let Some(msg) = ws_stream.next().await {
-            let msg = match msg {
-                Ok(msg) => msg,
-                Err(err) => {
+        loop {
+            let msg = match timeout(WF_WS_RECV_TIMEOUT, ws_stream.next()).await {
+                Err(_err) => {
+                    error!("Timeout waiting for next websocket message");
+                    break;
+                }
+                Ok(None) => {
+                    warn!("Websocket connection closed");
+                    break;
+                }
+                Ok(Some(Err(err))) => {
                     error!("WebSocket receive error: {:?}", err);
                     continue;
                 }
+                Ok(Some(Ok(msg))) => msg,
             };
+
             trace!("WS Message received: {}", msg);
             if msg.is_close() {
-                info!("WebSocket connection closed: {}", msg);
+                warn!("WebSocket connection closed: {}", msg);
                 break;
             }
             if !(msg.is_text()) {
                 warn!("WebSocket non-text message received: {}", msg);
                 continue;
             }
+            debug!("WS Message: {}", msg);
             let msg = WFMessage {
                 source: WFSource::WS,
                 message: msg.into_data(),
             };
-            match collector_tx.send(msg) {
-                Err(err) => { error!("Failed to add message to sender: {}", err); },
-                Ok(()) => (),
+            if let Err(err) = collector_tx.send(msg) {
+                error!("Failed to add message to sender: {}", err);
             }
+        }
+
+        if !ws_stream.is_terminated() {
+            // Close the stream and try to reconnect
+            info!("Closing websocket and reconnecting");
+            let _ = ws_stream.close(None).await;
         }
     }
 }

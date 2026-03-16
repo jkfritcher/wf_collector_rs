@@ -1,0 +1,15 @@
+[Unit]
+Description=WeatherFlow UDP/WS data collector
+Requires=network-online.target network.target docker.mosquitto.service
+After=network-online.target network.target docker.mosquitto.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+Restart=on-failure
+RestartSec=1
+User=wf_collector
+ExecStart=/opt/wf_collector/wf_collector /opt/wf_collector/wf_collector.conf
+
+[Install]
+WantedBy=multi-user.target
