@@ -5,13 +5,13 @@ use bytes::Bytes;
 
 use crate::config::Config;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct MqttArgs {
     pub hostname: String,
     pub port: u16,
     pub username: Option<String>,
     pub password: Option<String>,
-    pub client_id: Option<String>,
+    pub client_id: String,
     pub topic_base: String,
 }
 

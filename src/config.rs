@@ -25,7 +25,8 @@ pub struct Config {
     pub mqtt_port: u16,
     pub mqtt_username: Option<String>,
     pub mqtt_password: Option<String>,
-    pub mqtt_client_id: Option<String>,
+    #[serde(default = "Config::default_mqtt_client_id")]
+    pub mqtt_client_id: String,
     #[serde(default = "Config::default_mqtt_topic_base")]
     pub mqtt_topic_base: String,
 }
@@ -53,6 +54,10 @@ impl Config {
 
     fn default_mqtt_port() -> u16 {
         1883
+    }
+
+    fn default_mqtt_client_id() -> String {
+        String::from("wf-collector")
     }
 
     fn default_mqtt_topic_base() -> String {

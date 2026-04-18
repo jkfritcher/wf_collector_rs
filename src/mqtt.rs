@@ -1,16 +1,12 @@
 // Copyright (c) 2020, 2026, Jason Fritcher <jkf@wolfnet.org>
 // All rights reserved.
 
-use std::process;
-
 use tokio::sync::mpsc;
 use tokio::time::{Duration, sleep};
 
-use url::Url;
-
-use mqtt_async_client::{
-    Result,
-    client::{Client, KeepAlive, Publish as PublishOpts, QoS},
+use rumqttc::{
+    AsyncClient, ConnectReturnCode, ConnectionError, Event, EventLoop, Incoming, MqttOptions, QoS,
+    StateError,
 };
 
 #[allow(unused_imports)]
@@ -18,27 +14,10 @@ use log::{debug, error, info, trace, warn};
 
 use crate::common::{MqttArgs, WFSource};
 
-fn client_from_args(args: MqttArgs) -> Result<Client> {
-    let mut b = Client::builder();
-    b.set_url(
-        format!("mqtt://{0}:{1}", &args.hostname, args.port)
-            .parse::<Url>()
-            .map_err(|e| e.to_string())?,
-    )?
-    .set_client_id(args.client_id)
-    .set_keep_alive(KeepAlive::from_secs(30))
-    .set_connect_retry_delay(Duration::from_secs(1))
-    .set_packet_buffer_len(1024)
-    .set_automatic_connect(true);
-
-    // Set auth creds, if specified
-    if args.username.is_some() && args.password.is_some() {
-        b.set_username(args.username)
-            .set_password(args.password.map(|s| s.as_bytes().to_vec()));
-    }
-
-    b.build()
-}
+const MQTT_KEEPALIVE_DURATION: Duration = Duration::from_secs(30);
+const MQTT_MAX_PACKET_SIZE: usize = 1024;
+const MQTT_RECONNECT_DELAY: Duration = Duration::from_secs(1);
+const MQTT_FATAL_RECONNECT_DELAY: Duration = Duration::from_secs(60);
 
 pub fn mqtt_publish_raw_message(
     publisher_tx: &mpsc::UnboundedSender<(String, String)>,
@@ -69,26 +48,122 @@ pub async fn mqtt_publisher(
     mut publisher_rx: mpsc::UnboundedReceiver<(String, String)>,
     args: MqttArgs,
 ) {
-    let mut client = match client_from_args(args) {
-        Ok(client) => client,
-        Err(err) => {
-            error!("Failed to build mqtt client: {}", err);
-            process::abort();
-        }
-    };
+    // Build options for mqtt client
+    let mut opts = MqttOptions::new(args.client_id, args.hostname, args.port);
+    opts.set_keep_alive(MQTT_KEEPALIVE_DURATION);
+    opts.set_max_packet_size(MQTT_MAX_PACKET_SIZE, MQTT_MAX_PACKET_SIZE);
 
-    while let Err(err) = client.connect().await {
-        error!("Failed to connect to mqtt server: {}", err);
-        sleep(Duration::from_secs(1)).await;
+    // Set credentials, if both username and password are specified
+    if let (Some(username), Some(password)) = (args.username, args.password) {
+        opts.set_credentials(username, password);
     }
 
-    while let Some((topic, payload)) = publisher_rx.recv().await {
-        trace!("Received message: {} | {}", topic, payload);
-        let mut p = PublishOpts::new(topic, payload.as_bytes().to_vec());
-        p.set_qos(QoS::AtMostOnce);
-        p.set_retain(false);
-        if let Err(err) = client.publish(&p).await {
-            error!("Failed to publish message: {}", err);
+    let mut client: Option<AsyncClient> = None;
+    let mut eventloop: Option<EventLoop> = None;
+
+    loop {
+        #[allow(unused_assignments)]
+        let mut disconnect = false;
+        #[allow(unused_assignments)]
+        let mut sleep_duration: Option<Duration> = None;
+
+        if client.is_none() {
+            let (c, el) = AsyncClient::new(opts.clone(), 16);
+            client = Some(c);
+            eventloop = Some(el);
+            info!("Connected to mqtt broker");
         }
+
+        let c = client.as_mut().unwrap();
+        let el = eventloop.as_mut().unwrap();
+
+        'publish_loop: loop {
+            tokio::select! {
+                Some((topic, payload)) = publisher_rx.recv() => {
+                    trace!("Received message: {} | {}", topic, payload);
+                    if let Err(e) = c.publish(topic, QoS::AtLeastOnce, false, payload).await {
+                        error!("Published failed: {}", e);
+                        continue;
+                    }
+                }
+                event = el.poll() => {
+                    match event {
+                        Ok(Event::Incoming(Incoming::Disconnect)) => {
+                            info!("Received disconnect from broker.");
+                            disconnect = true;
+                            sleep_duration = Some(MQTT_RECONNECT_DELAY);
+                            break 'publish_loop;
+                        }
+                        Ok(_) => {} // Normal events, safely ignored
+                        Err(e) => {
+                            error!("mqtt eventloop error: {:?}", &e);
+                            if is_critical_error(&e) {
+                                // Check if it's likely a permanent config issue
+                                let is_fatal_error = matches!(e,
+                                    ConnectionError::ConnectionRefused(ConnectReturnCode::BadUserNamePassword) |
+                                    ConnectionError::ConnectionRefused(ConnectReturnCode::NotAuthorized) |
+                                    ConnectionError::ConnectionRefused(ConnectReturnCode::BadClientId)
+                                );
+
+                                sleep_duration = if is_fatal_error {
+                                    Some(MQTT_FATAL_RECONNECT_DELAY)
+                                } else {
+                                    Some(MQTT_RECONNECT_DELAY)
+                                };
+                                disconnect = true;
+                                break 'publish_loop;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if disconnect {
+            client = None;
+            eventloop = None;
+        }
+
+        if let Some(duration) = sleep_duration {
+            sleep(duration).await;
+        }
+    }
+}
+
+fn is_critical_error(e: &ConnectionError) -> bool {
+    match e {
+        // === Fatal configuration / auth errors ===
+        // These almost never recover by reconnecting
+        ConnectionError::ConnectionRefused(code) => {
+            match code {
+                ConnectReturnCode::BadUserNamePassword
+                | ConnectReturnCode::NotAuthorized
+                | ConnectReturnCode::BadClientId
+                | ConnectReturnCode::RefusedProtocolVersion
+                | ConnectReturnCode::ServiceUnavailable => {
+                    // These are worth special logging because they usually need config changes
+                    error!("FATAL error occurred: {}", &e);
+                    true
+                }
+                _ => true, // treat other refusal codes as critical too
+            }
+        }
+
+        // Internal MQTT state machine is confused — usually needs full reset
+        ConnectionError::MqttState(state_err) => matches!(
+            state_err,
+            StateError::InvalidState
+                | StateError::ConnectionAborted
+                | StateError::Deserialization(_)
+        ),
+
+        // TLS / certificate / URL / protocol configuration problems
+        ConnectionError::Tls(_)
+        | ConnectionError::NotConnAck(_)
+        | ConnectionError::RequestsDone => true,
+
+        // Everything else (network, timeouts, temporary broker issues, etc.)
+        // → Let rumqttc's built-in reconnection handle it by continuing to poll()
+        _ => false,
     }
 }
